@@ -1,0 +1,129 @@
+---
+title: "Algorithmic fairness audit (mini-consulting project)"
+author: "Yuhui Cao"
+subtitle: STATS 369
+output:
+  html_document:
+    df_print: paged
+---
+
+# Setup
+
+```{r, message = FALSE, warning = FALSE}
+# Load libraries
+library(tidyverse)
+
+# read data files
+phase1_data = read_csv("data/2022-phase1-new-grad-applicants.csv")
+phase2_data = read_csv("data/2022-phase2-new-grad-applicants.csv")
+phase3_data = read_csv("data/2022-phase3-new-grad-applicants.csv")
+finals_data = read_csv("data/2022-final-hires-newgrad.csv")
+```
+
+# Background
+
+A company called Black Saber has been trialling a new AI recruitment pipeline manager for their Data and Software
+teams. There are three phases, outlined below, each narrowing down the field of applicants. Based on advice from their
+legal team, they are not able to provide you with the original application data, but they can provide these anonymised
+indicators/ratings from each phase. `applicant_id` is consistent across phases.
+
+### 1. Wrangle and tidy the datasets
+
+```{r, message=F,warning=F}
+# tidy phase3 data set
+phase3_data_pivoted = phase3_data |> pivot_longer(cols=2:23,names_to='id', values_to='rating') |> 
+  pivot_wider(names_from=applicant_id, values_from = rating)
+
+# convert id type to numeric
+phase3_data_pivoted$id = as.numeric(phase3_data_pivoted$id)
+
+# joined the data into one data set
+joined_data = full_join(phase1_data,phase2_data) |> full_join(phase3_data_pivoted, by=c("applicant_id" = "id"))
+
+# create indicator variables for passing phase1,2, and 3
+joined_data = joined_data |> 
+  mutate(passedP1 = ifelse(applicant_id %in% phase2_data$applicant_id, "Passed", "Failed"), 
+         passedP2 = ifelse(applicant_id %in% phase3_data_pivoted$id, "Passed", "Failed"),
+         passedP3 = ifelse(applicant_id %in% finals_data$applicant_id,"Passed", "Failed"))
+
+head(joined_data,10)
+```
+
+### 2. Numeric summary
+
+```{r, message=F, warning=F}
+# filter data to applicants who have passed phase1 and group by gender
+filtered_data = joined_data |> filter(passedP1 == "Passed") |> group_by(gender)
+
+# calculate mean for speaking skills assessed by AI
+num_summary = filtered_data |>
+  summarise(
+    count = n(),
+    mean = mean(speaking_skills),
+    sd = sd(speaking_skills))
+
+knitr::kable(num_summary)
+```
+From the summary above we see that the average speaking skill rating for men is `r round(num_summary$mean[num_summary$gender == "Man"],1)` and for women is `r round(num_summary$mean[num_summary$gender == "Woman"],1)`. We can also see that the number of observations for those who chose, prefer not to say as their gender was insufficient (`r num_summary$count[num_summary$gender == "Prefer not to say"]`) to make a inference, so we choose to remove it. The mean skill rating for men is higher than woman.
+
+```{r, message=F,warning=F}
+# We see that there is not enough "Prefer not to say" observations so we decide to drop it
+filtered_data_new = filtered_data |> filter(gender != "Prefer not to say")
+
+# new numerical summary
+num_sum_new = filtered_data_new |>
+  summarise(
+    count = n(),
+    mean = mean(speaking_skills),
+    sd = sd(speaking_skills))
+
+knitr::kable(num_sum_new)
+```
+
+### T-test
+
+```{r, message=F, warning=F}
+# perform t-test on speaking skills vs gender
+ttest_result = t.test(speaking_skills ~ gender, data = filtered_data_new, var.equal=T)
+ttest_result
+```
+
+We perform a t-test to compare the means between the two groups (`r num_sum_new$gender`) and see that the p-value is `r ttest_result$p.value` which is below 0.05 meaning that there is evidence to say that there is a difference in mean speaking skill rating between `r num_sum_new$gender[num_sum_new$gender == "Man"]` and  `r num_sum_new$gender[num_sum_new$gender == "Woman"]`.
+
+### Graphing
+
+```{r, message = F, warning = F}
+# create bar graph to display the distribution of speaking skill rating between the genders.
+filtered_data_new |> ggplot(mapping = aes(x = factor(speaking_skills), fill=gender)) + geom_bar(stat="count") + facet_grid(.~gender) + 
+  labs(title = "Distribution of speaking skill rating", subtitle="by gender", x = "speaking skill rating", y="count",
+       alt = "A bar chart faceted by gender representing the dsitribution of speaking skill ratings. On the x-axis is the speaking skill rating from low (0) to high (10). On the y axis is the count for the number of individuals in each speaking skill rating. The graph shows that for men the skill rating is roughly uniformly dsitributed while for women there are more in the lower skill rating.") + theme_minimal()
+
+# plot boxplot 
+filtered_data_new |> ggplot(mapping = aes(x = gender, y = speaking_skills, colour=gender)) + geom_boxplot() +
+  labs(title = "Distribution of speaking skill rating", subtitle = "by gender", x = "gender", y = "speaking skill rating") + geom_jitter(height = 0) + theme_minimal()
+```
+We can see in the bar graph that majority of women applicants have a speaking skill rating that lies between the lower ratings (1-4) while for men they it is roughly evenly distributed from a rating of 2 to 9. On average men are placed higher in speaking skills than woman.
+
+### 3. alt text
+alt = "A bar chart faceted by gender representing the dsitribution of speaking skill ratings. On the x-axis is the speaking skill rating from low (0) to high (10). On the y axis is the count for the number of individuals in each speaking skill rating. The graph shows that for men the skill rating is roughly uniformly distributed while for women there are more in the lower skill rating."
+
+### 4. Conclusion
+After reviewing the data from the  AI applicant processing system, we found a significant difference in speaking skill ratings between male and female applicants; we removed applicants who preferred not to reveal their gender due to insufficient observations. Our numeric summary found that on average male applicants received a higher speaking skill rating (around 5) than female applicants (around 3). After conducting a statistical analysis we can confirm that this difference was significant, this was further supported from a visualisation which highlights the same points as the numeric summary. Therefore since there was a significant difference between the speaking skill ratings between male and females (with the around the same number of observations) this could be a potential risk of gender bias in the AI model.
+
+
+# Reprex Critique
+We can see that example A does not use reprex to reproduce its bug reports or includes every command (libraries used, what my_url is) used, compared to examples B and C which do use reprex and includes every command used. Examples A and B both includes the entire poem to demonstrate the problem compared to example C which uses a shortened sentence (minimal data) to demonstrate the problem. Therefore, example C would be the best example of reporting a bug as it follows reprex best practices the most out of the three examples, increasing its reproducibility for others. Example C uses reprex, includes every command that is needed, uses minimal data to demonstrate the problem, example B uses reprex and includes every command / code needed but does not use minimal data to demonstrate the problem. Example A does not use reprex (but a screenshot of the bug) , does not include every command/code and uses the entire data (poem) thus has the lowest reproducibility ("Reprex do's and don'ts," n.d.).
+
+# Reflection of project
+
+1. I showcased the capability of independence and integrity, which is one of the Graduate Capabilities. During the task, I demonstrated my ability to learn and work autonomously by looking up documentation for R code I was unfamiliar with to understand better how to use it, for example, how to check if an applicant id was in another data-set to create an indicator variable to determine if the applicant had passed a phase or not. Although facing some confusion on this task, I showed my resilience and pro-activity by finishing the task while asking for assistance and clarification on anything I found unclear. I demonstrated this capability by making academic and professional decisions, like only asking for assistance after I had tried my attempt at the task or researching independently on online resources ("Graduate profiles - The University of Auckland," n.d.).
+
+2.  I am proud of this assignment as I have gained a lot of experience with R and data science practice. Although unsure of my overall performance for this assignment , I believe the experience and learning is what matters the most.
+
+3.  One thing i would like to do differently in the next assignment is reach out for help earlier, delayed asking for clarification and help on task2 until the last opportunity.
+
+# References
+
+1.  Graduate profiles - The University of Auckland. (n.d.). Www.auckland.ac.nz. <https://www.auckland.ac.nz/en/students/forms-policies-and-guidelines/student-policies-and-guidelines/graduate-profile.html>
+
+2.  Reprex do's and don'ts. (n.d.). Reprex.tidyverse.org. Retrieved August 2, 2023, from <https://reprex.tidyverse.org/articles/reprex-dos-and-donts.html>
